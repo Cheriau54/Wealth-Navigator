@@ -1,0 +1,113 @@
+// Real-time exchange rates - fetched from API only
+let EXCHANGE_RATES = null;
+
+export const CURRENCY_SYMBOLS = {
+  USD: '$',
+  HKD: '$',
+  EUR: '€',
+  CNY: '¥',
+  GBP: '£',
+  JPY: '¥',
+  AUD: '$',
+  SGD: '$',
+  CAD: '$',
+  KRW: '₩'
+};
+
+export const CURRENCIES = ['USD', 'HKD', 'EUR', 'CNY', 'GBP', 'JPY', 'AUD', 'SGD', 'CAD', 'KRW'];
+
+const API_KEY = '393a43661559351810312743';
+let fetchPromise = null;
+
+export async function fetchExchangeRates() {
+  // If already fetching, wait for that promise
+  if (fetchPromise) {
+    return fetchPromise;
+  }
+
+  // If already fetched, return immediately
+  if (EXCHANGE_RATES !== null) {
+    return EXCHANGE_RATES;
+  }
+
+  fetchPromise = (async () => {
+    try {
+      console.log('Fetching real-time exchange rates...');
+      const response = await fetch(`https://v6.exchangerate-api.com/v6/${API_KEY}/latest/USD`);
+      const data = await response.json();
+      
+      if (data.result === 'success') {
+        EXCHANGE_RATES = {
+          USD: 1,
+          HKD: data.conversion_rates.HKD,
+          EUR: data.conversion_rates.EUR,
+          CNY: data.conversion_rates.CNY,
+          GBP: data.conversion_rates.GBP,
+          JPY: data.conversion_rates.JPY,
+          AUD: data.conversion_rates.AUD,
+          SGD: data.conversion_rates.SGD,
+          CAD: data.conversion_rates.CAD,
+          KRW: data.conversion_rates.KRW
+        };
+        console.log('Exchange rates loaded:', EXCHANGE_RATES);
+      } else {
+        throw new Error('API returned error');
+      }
+    } catch (error) {
+      console.error('Failed to fetch exchange rates:', error);
+      // Emergency fallback if API fails
+      EXCHANGE_RATES = {
+        USD: 1, HKD: 7.82, EUR: 0.92, CNY: 7.24, GBP: 0.79,
+        JPY: 149.50, AUD: 1.53, SGD: 1.34, CAD: 1.36, KRW: 1320
+      };
+    }
+    
+    return EXCHANGE_RATES;
+  })();
+
+  return fetchPromise;
+}
+
+export function getExchangeRates() {
+  return EXCHANGE_RATES;
+}
+
+export function convertCurrency(amount, fromCurrency, toCurrency) {
+  if (!EXCHANGE_RATES) {
+    console.warn('Exchange rates not loaded yet');
+    return amount;
+  }
+  if (fromCurrency === toCurrency) return amount;
+  const usdAmount = amount / EXCHANGE_RATES[fromCurrency];
+  return usdAmount * EXCHANGE_RATES[toCurrency];
+}
+
+export function formatCurrency(amount, currency, showSymbol = true) {
+  const absAmount = Math.abs(amount);
+  const formatted = new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(absAmount);
+  
+  if (showSymbol) {
+    const prefix = amount < 0 ? '-' : '';
+    return `${prefix}${currency} ${CURRENCY_SYMBOLS[currency]}${formatted}`;
+  }
+  return formatted;
+}
+
+export function formatCompact(amount, currency) {
+  const absAmount = Math.abs(amount);
+  let formatted;
+  
+  if (absAmount >= 1000000) {
+    formatted = (absAmount / 1000000).toFixed(2) + 'M';
+  } else if (absAmount >= 1000) {
+    formatted = (absAmount / 1000).toFixed(1) + 'K';
+  } else {
+    formatted = absAmount.toFixed(2);
+  }
+  
+  const prefix = amount < 0 ? '-' : '';
+  return `${prefix}${currency} ${CURRENCY_SYMBOLS[currency]}${formatted}`;
+}

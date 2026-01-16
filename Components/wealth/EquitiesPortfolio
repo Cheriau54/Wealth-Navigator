@@ -1,0 +1,254 @@
+import React, { useState, useEffect } from 'react';
+import { TrendingUp, Plus, Pencil, Trash2, RefreshCw } from 'lucide-react';
+import { Button } from "@/components/ui/button";
+import SectionCard from './SectionCard';
+import EditModal from './EditModal';
+import { convertCurrency, formatCurrency } from './CurrencyUtils';
+import { base44 } from '@/api/base44Client';
+
+const FIELDS = [
+  { key: 'ticker', label: 'Ticker', type: 'text', placeholder: 'e.g. AAPL' },
+  { key: 'quantity', label: 'Quantity', type: 'number', placeholder: '0' },
+  { key: 'avgBuyPrice', label: 'Avg Buy Price (USD)', type: 'number', placeholder: '0.00' }
+];
+
+export default function EquitiesPortfolio({ data, setData, masterCurrency, livePrices, setLivePrices }) {
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editIndex, setEditIndex] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const fetchPrices = async () => {
+    if (data.length === 0) return;
+    
+    setLoading(true);
+    const tickers = [...new Set(data.map(d => d.ticker.toUpperCase()))];
+    const API_KEY = 'RCOIHB62BAXECU2U';
+    
+    console.log('Fetching stock prices for:', tickers);
+    
+    try {
+      // Fetch prices sequentially to avoid API rate limits
+      for (const ticker of tickers) {
+        try {
+          const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${ticker}&apikey=${API_KEY}`;
+          console.log(`Fetching ${ticker} from:`, url);
+          
+          const response = await fetch(url);
+          const result = await response.json();
+          
+          console.log(`Response for ${ticker}:`, result);
+          
+          if (result['Global Quote'] && Object.keys(result['Global Quote']).length > 0) {
+            const quote = result['Global Quote'];
+            const price = parseFloat(quote['05. price']);
+            const change = parseFloat(quote['09. change']);
+            const previousClose = parseFloat(quote['08. previous close']);
+            
+            setLivePrices(prev => ({
+              ...prev,
+              [ticker]: {
+                price: price,
+                change: change,
+                changePercent: previousClose > 0 ? (change / previousClose) * 100 : 0,
+                previousClose: previousClose
+              }
+            }));
+            
+            console.log(`Price loaded for ${ticker}:`, price);
+          } else if (result['Note']) {
+            console.warn(`API limit reached: ${result['Note']}`);
+            break;
+          } else {
+            console.warn(`No data for ${ticker}:`, result);
+          }
+          
+          // Add delay to respect API rate limits (5 calls per minute for free tier)
+          await new Promise(resolve => setTimeout(resolve, 15000));
+          
+        } catch (err) {
+          console.error(`Failed to fetch ${ticker}:`, err);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch prices:', error);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    if (data.length > 0 && Object.keys(livePrices).length === 0) {
+      fetchPrices();
+    }
+  }, [data.length]);
+
+  const calculateTotal = () => {
+    return data.reduce((sum, item) => {
+      const priceData = livePrices[item.ticker.toUpperCase()];
+      const price = priceData?.price || item.avgBuyPrice;
+      const value = item.quantity * price;
+      return sum + convertCurrency(value, 'USD', masterCurrency);
+    }, 0);
+  };
+
+  const handleSave = (formData) => {
+    const normalized = { ...formData, ticker: formData.ticker.toUpperCase() };
+    const newData = [...data];
+    
+    // WACB for duplicate tickers
+    const existingIndex = newData.findIndex(
+      (item, idx) => idx !== editIndex && item.ticker === normalized.ticker
+    );
+
+    if (existingIndex !== -1 && editIndex === null) {
+      const existing = newData[existingIndex];
+      const totalQty = existing.quantity + normalized.quantity;
+      const wacb = ((existing.quantity * existing.avgBuyPrice) + (normalized.quantity * normalized.avgBuyPrice)) / totalQty;
+      newData[existingIndex] = { ...existing, quantity: totalQty, avgBuyPrice: Math.round(wacb * 100) / 100 };
+    } else if (editIndex !== null) {
+      newData[editIndex] = normalized;
+    } else {
+      newData.push({ ...normalized, id: Date.now() });
+    }
+    
+    setData(newData);
+    setEditIndex(null);
+    
+    // Fetch price for new ticker
+    if (!livePrices[normalized.ticker]) {
+      setTimeout(fetchPrices, 100);
+    }
+  };
+
+  const handleDelete = (index) => {
+    setData(data.filter((_, i) => i !== index));
+  };
+
+  return (
+    <SectionCard
+      title="Equities Portfolio"
+      icon={<TrendingUp className="w-5 h-5 text-[#4ade80]" />}
+      headerValue={calculateTotal()}
+      masterCurrency={masterCurrency}
+    >
+      <div className="space-y-3">
+        <div className="flex justify-end">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={fetchPrices}
+            disabled={loading || data.length === 0}
+            className="text-white/50 hover:text-white h-8 text-xs"
+          >
+            <RefreshCw className={`w-3 h-3 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
+            Refresh Prices
+          </Button>
+        </div>
+        
+        <div className="overflow-x-auto pb-2">
+          {data.length === 0 ? (
+            <div className="text-center py-8 text-white/30">
+              No equities added yet
+            </div>
+          ) : (
+            <div className="flex gap-3 min-w-max">
+              {data.map((item, index) => {
+                const priceData = livePrices[item.ticker.toUpperCase()];
+                const currentPrice = priceData?.price || item.avgBuyPrice;
+                const dailyChange = priceData?.change || 0;
+                const dailyChangePercent = priceData?.changePercent || 0;
+                const hasLiveData = !!priceData?.price;
+                
+                const marketValue = item.quantity * currentPrice;
+                const costBasis = item.quantity * item.avgBuyPrice;
+                const totalPnl = marketValue - costBasis;
+                const totalPnlPercent = costBasis > 0 ? (totalPnl / costBasis) * 100 : 0;
+                const dailyPnl = item.quantity * dailyChange;
+                const convertedValue = convertCurrency(marketValue, 'USD', masterCurrency);
+                
+                return (
+                  <div 
+                    key={item.id || index}
+                    className="flex-shrink-0 w-96 p-3 rounded-xl bg-white/5 hover:bg-white/[0.07] transition-colors group"
+                  >
+                    <div className="flex flex-col h-full">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="font-semibold text-white text-lg">{item.ticker.toUpperCase()}</span>
+                          <span className="text-xs text-white/40">{item.quantity} shares</span>
+                          {!hasLiveData && (
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300">
+                              No live data
+                            </span>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs mb-2">
+                          <div className="text-white/50">
+                            Avg Buy: <span className="text-white">USD ${item.avgBuyPrice.toFixed(2)}</span>
+                          </div>
+                          <div className="text-white/50">
+                            Live Price: <span className="text-white">USD ${currentPrice.toFixed(2)}</span>
+                          </div>
+                          <div className="text-white/50">
+                            Market Value: <span className="text-white">USD ${marketValue.toFixed(2)}</span>
+                          </div>
+                          {masterCurrency !== 'USD' && (
+                            <div className="text-white/50">
+                              ≈ <span className="text-[#4ade80]">{formatCurrency(convertedValue, masterCurrency)}</span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-1 text-xs pt-2 border-t border-white/10">
+                          <div className={`${dailyPnl >= 0 ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>
+                            Daily P&L: {dailyPnl >= 0 ? '+' : ''}USD ${dailyPnl.toFixed(2)} ({dailyChangePercent >= 0 ? '+' : ''}{dailyChangePercent.toFixed(2)}%)
+                          </div>
+                          <div className={`${totalPnl >= 0 ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>
+                            Total P&L: {totalPnl >= 0 ? '+' : ''}USD ${totalPnl.toFixed(2)} ({totalPnlPercent.toFixed(1)}%)
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 mt-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => { setEditIndex(index); setModalOpen(true); }}
+                          className="h-7 w-7 text-white/50 hover:text-white hover:bg-white/10"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => handleDelete(index)}
+                          className="h-7 w-7 text-white/50 hover:text-[#f87171] hover:bg-red-500/10"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        
+        <Button
+          onClick={() => { setEditIndex(null); setModalOpen(true); }}
+          className="w-full bg-white/5 hover:bg-white/10 text-white/70 border border-dashed border-white/20"
+        >
+          <Plus className="w-4 h-4 mr-2" />
+          Add Stock
+        </Button>
+      </div>
+
+      <EditModal
+        isOpen={modalOpen}
+        onClose={() => { setModalOpen(false); setEditIndex(null); }}
+        title={editIndex !== null ? "Edit Position" : "Add Stock Position"}
+        fields={FIELDS}
+        data={editIndex !== null ? data[editIndex] : null}
+        onSave={handleSave}
+      />
+    </SectionCard>
+  );
+}

@@ -1,0 +1,354 @@
+import React, { useState, useEffect } from 'react';
+import { Target, Sparkles, Loader2 } from 'lucide-react';
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import SectionCard from './SectionCard';
+import { convertCurrency, formatCurrency, CURRENCIES } from './CurrencyUtils';
+import { base44 } from '@/api/base44Client';
+
+export default function AuditPlan({ 
+  data, 
+  setData, 
+  masterCurrency, 
+  currentNetWorth,
+  portfolioBreakdown 
+}) {
+  const [advice, setAdvice] = useState('');
+  const [loadingAdvice, setLoadingAdvice] = useState(false);
+
+  // Use state from data prop directly
+  const goalAmount = data.wealthGoal || 1000000;
+  const goalCurrency = data.goalCurrency || 'USD';
+
+  const {
+    horizonYears = 10,
+    monthlyIncome = 0,
+    estInflation = 3,
+    estStockGrowth = 7
+  } = data;
+
+  // Keep the goal in its original currency, convert only for calculation
+  const goalInMaster = convertCurrency(goalAmount, goalCurrency, masterCurrency);
+  
+  // Detailed FV Calculation Logic:
+  // 1. Real growth rate = Nominal growth - Inflation
+  const realGrowthRate = (estStockGrowth - estInflation) / 100;
+  
+  // 2. Current portfolio composition weights
+  const totalAssets = portfolioBreakdown.liquid + portfolioBreakdown.fixed + portfolioBreakdown.equities;
+  const liquidWeight = totalAssets > 0 ? portfolioBreakdown.liquid / totalAssets : 0;
+  const fixedWeight = totalAssets > 0 ? portfolioBreakdown.fixed / totalAssets : 0;
+  const equitiesWeight = totalAssets > 0 ? portfolioBreakdown.equities / totalAssets : 0;
+  
+  // 3. Weighted average expected return (assuming different rates per asset class)
+  // Liquid: inflation rate, Fixed: inflation + 1%, Equities: stock growth rate
+  const liquidReturn = estInflation / 100;
+  const fixedReturn = (estInflation + 1) / 100;
+  const equitiesReturn = estStockGrowth / 100;
+  
+  const weightedReturn = (liquidWeight * liquidReturn) + (fixedWeight * fixedReturn) + (equitiesWeight * equitiesReturn);
+  
+  // 4. Projected FV using weighted return: FV = PV × (1 + r)^n
+  const projectedFV = currentNetWorth * Math.pow(1 + weightedReturn, horizonYears);
+  
+  // 5. Alternative simple FV using real growth rate
+  const simpleFV = currentNetWorth * Math.pow(1 + realGrowthRate, horizonYears);
+  
+  // Capital Gap
+  const capitalGap = goalInMaster - projectedFV;
+  const isSufficient = capitalGap <= 0;
+  
+  // Progress percentage
+  const progressPct = goalInMaster > 0 ? Math.min((currentNetWorth / goalInMaster) * 100, 100) : 0;
+  
+  // PMT formula for savings gap: PMT = FV * r / ((1+r)^n - 1)
+  const monthlyRate = realGrowthRate / 12;
+  const months = horizonYears * 12;
+  let savingsGapMonthly = 0;
+  if (capitalGap > 0 && monthlyRate > 0) {
+    savingsGapMonthly = (capitalGap * monthlyRate) / (Math.pow(1 + monthlyRate, months) - 1);
+  }
+
+  const handleChange = (key, value) => {
+    setData(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleGoalAmountChange = (value) => {
+    const numValue = parseFloat(value) || 0;
+    setData(prev => ({ ...prev, wealthGoal: numValue }));
+  };
+
+  const handleGoalCurrencyChange = (value) => {
+    setData(prev => ({ ...prev, goalCurrency: value }));
+  };
+
+  const generateAdvice = async () => {
+    setLoadingAdvice(true);
+    try {
+      const response = await base44.integrations.Core.InvokeLLM({
+        prompt: `As a financial advisor, analyze this wealth situation and provide specific, actionable advice:
+
+Current Net Worth: ${formatCurrency(currentNetWorth, masterCurrency)}
+Wealth Goal: ${formatCurrency(goalInMaster, masterCurrency)} in ${horizonYears} years
+Projected Portfolio Value: ${formatCurrency(projectedFV, masterCurrency)}
+Capital Gap: ${formatCurrency(Math.abs(capitalGap), masterCurrency)} ${isSufficient ? '(SURPLUS)' : '(DEFICIT)'}
+Monthly Income: ${formatCurrency(monthlyIncome, masterCurrency)}
+Monthly Savings Needed to Bridge Gap: ${formatCurrency(savingsGapMonthly, masterCurrency)}
+
+Portfolio Composition:
+${JSON.stringify(portfolioBreakdown, null, 2)}
+
+Assumptions: ${estInflation}% inflation, ${estStockGrowth}% stock growth
+
+Weighted Portfolio Return: ${(weightedReturn * 100).toFixed(2)}%
+Liquid Assets Weight: ${(liquidWeight * 100).toFixed(1)}% @ ${estInflation}%
+Fixed Savings Weight: ${(fixedWeight * 100).toFixed(1)}% @ ${(estInflation + 1)}%
+Equities Weight: ${(equitiesWeight * 100).toFixed(1)}% @ ${estStockGrowth}%
+
+Provide 3-4 specific recommendations for portfolio reallocation and savings strategies. Be concise but actionable. Focus on sector rotation if there's too much in liquid assets vs equities.`,
+        add_context_from_internet: false
+      });
+      
+      setAdvice(response);
+    } catch (error) {
+      setAdvice('Unable to generate advice at this time. Please try again.');
+    }
+    setLoadingAdvice(false);
+  };
+
+  return (
+    <SectionCard
+      title="Audit & Plan Health"
+      icon={<Target className="w-5 h-5 text-[#4ade80]" />}
+      headerValue={0}
+      masterCurrency={masterCurrency}
+      statusText={isSufficient ? 'SUFFICIENT' : 'INSUFFICIENT'}
+    >
+      <div className="space-y-5">
+        {/* Input Grid */}
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <div className="col-span-2 md:col-span-1">
+            <Label className="text-white/50 text-xs">Wealth Goal</Label>
+            <div className="flex gap-2 mt-1.5">
+              <Input
+                type="number"
+                value={goalAmount}
+                onChange={(e) => handleGoalAmountChange(e.target.value)}
+                className="bg-white/5 border-white/10 text-white flex-1"
+                placeholder="1,000,000"
+              />
+              <Select value={goalCurrency} onValueChange={handleGoalCurrencyChange}>
+                <SelectTrigger className="bg-white/5 border-white/10 text-white w-24">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-[#1e293b] border-white/10">
+                  {CURRENCIES.map(c => (
+                    <SelectItem key={c} value={c} className="text-white hover:bg-white/10">{c}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {goalCurrency !== masterCurrency && (
+              <div className="text-xs text-white/40 mt-1">
+                ≈ {formatCurrency(goalInMaster, masterCurrency)}
+              </div>
+            )}
+          </div>
+          
+          <div>
+            <Label className="text-white/50 text-xs">Horizon (Years)</Label>
+            <Input
+              type="number"
+              value={horizonYears || ''}
+              onChange={(e) => handleChange('horizonYears', parseInt(e.target.value) || 0)}
+              className="bg-white/5 border-white/10 text-white mt-1.5"
+            />
+          </div>
+          
+          <div>
+            <Label className="text-white/50 text-xs">Monthly Income</Label>
+            <Input
+              type="number"
+              value={monthlyIncome || ''}
+              onChange={(e) => handleChange('monthlyIncome', parseFloat(e.target.value) || 0)}
+              className="bg-white/5 border-white/10 text-white mt-1.5"
+            />
+          </div>
+          
+          <div>
+            <Label className="text-white/50 text-xs">Est. Inflation %</Label>
+            <Input
+              type="number"
+              value={estInflation || ''}
+              onChange={(e) => handleChange('estInflation', parseFloat(e.target.value) || 0)}
+              className="bg-white/5 border-white/10 text-white mt-1.5"
+            />
+          </div>
+          
+          <div>
+            <Label className="text-white/50 text-xs">Est. Stock Growth %</Label>
+            <Input
+              type="number"
+              value={estStockGrowth || ''}
+              onChange={(e) => handleChange('estStockGrowth', parseFloat(e.target.value) || 0)}
+              className="bg-white/5 border-white/10 text-white mt-1.5"
+            />
+          </div>
+        </div>
+
+        {/* Progress Bar */}
+        <div className="p-4 rounded-xl bg-gradient-to-br from-white/5 to-white/[0.02] border border-white/10">
+          <div className="flex justify-between items-center mb-2">
+            <span className="text-sm text-white/60">Progress to Goal</span>
+            <span className="text-sm font-semibold text-white">{progressPct.toFixed(1)}%</span>
+          </div>
+          <div className="h-3 bg-white/5 rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-gradient-to-r from-[#4ade80] to-[#22c55e] transition-all duration-500 rounded-full"
+              style={{ width: `${Math.min(progressPct, 100)}%` }}
+            />
+          </div>
+          <div className="flex justify-between items-center mt-2 text-xs">
+            <span className="text-white/40">
+              Current: {formatCurrency(currentNetWorth, masterCurrency)}
+            </span>
+            <span className="text-white/40">
+              Goal: {formatCurrency(goalInMaster, masterCurrency)}
+            </span>
+          </div>
+          <div className="text-center mt-2">
+            <span className={`text-sm font-semibold ${isSufficient ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>
+              {isSufficient ? 'SURPLUS' : 'DEFICIT'}: {formatCurrency(Math.abs(capitalGap), masterCurrency)}
+            </span>
+          </div>
+        </div>
+
+        {/* FV Logic Breakdown - Now dynamically updates */}
+        <div className="p-4 rounded-xl bg-gradient-to-br from-violet-500/10 to-indigo-500/10 border border-violet-500/20">
+          <h3 className="text-sm font-semibold text-violet-300 mb-3 flex items-center gap-2">
+            <Target className="w-4 h-4" />
+            Projected Future Value (FV) Logic
+          </h3>
+          <div className="space-y-2 text-xs text-white/70">
+            <div className="flex justify-between">
+              <span>Current Portfolio Value (PV):</span>
+              <span className="font-mono text-white font-semibold">{formatCurrency(currentNetWorth, masterCurrency)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Wealth Goal:</span>
+              <span className="font-mono text-violet-300 font-semibold">{formatCurrency(goalInMaster, masterCurrency)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Time Horizon (n):</span>
+              <span className="font-mono text-white">{horizonYears} years</span>
+            </div>
+            <div className="border-t border-white/10 pt-2 mt-2">
+              <div className="text-white/50 mb-1.5 font-medium">Portfolio Composition Weights:</div>
+              <div className="ml-3 space-y-1.5">
+                <div className="flex justify-between">
+                  <span>• Liquid Assets ({(liquidWeight * 100).toFixed(1)}%) @ {estInflation}%:</span>
+                  <span className="font-mono text-cyan-300">{formatCurrency(portfolioBreakdown.liquid, masterCurrency)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>• Fixed Savings ({(fixedWeight * 100).toFixed(1)}%) @ {(estInflation + 1).toFixed(1)}%:</span>
+                  <span className="font-mono text-purple-300">{formatCurrency(portfolioBreakdown.fixed, masterCurrency)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>• Equities ({(equitiesWeight * 100).toFixed(1)}%) @ {estStockGrowth}%:</span>
+                  <span className="font-mono text-green-300">{formatCurrency(portfolioBreakdown.equities, masterCurrency)}</span>
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-between border-t border-white/10 pt-2 mt-2">
+              <span>Weighted Avg Return (r):</span>
+              <span className="font-mono text-[#4ade80] font-semibold">{(weightedReturn * 100).toFixed(2)}%</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Real Growth Rate (Stock - Inflation):</span>
+              <span className="font-mono text-[#4ade80]">{(realGrowthRate * 100).toFixed(2)}%</span>
+            </div>
+            <div className="border-t border-white/10 pt-2 mt-2">
+              <div className="text-white/50 mb-2 font-medium">Formula: FV = PV × (1 + r)^n</div>
+              <div className="bg-white/5 p-2 rounded-lg space-y-1.5">
+                <div className="flex justify-between">
+                  <span>Calculation:</span>
+                  <span className="font-mono text-white/80 text-[10px]">
+                    {formatCurrency(currentNetWorth, masterCurrency)} × (1 + {(weightedReturn * 100).toFixed(2)}%)^{horizonYears}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center pt-1.5 border-t border-white/10">
+                  <span className="font-medium">Projected FV (Weighted):</span>
+                  <span className="font-mono text-[#4ade80] font-bold text-sm">{formatCurrency(projectedFV, masterCurrency)}</span>
+                </div>
+              </div>
+              <div className="flex justify-between mt-2 text-white/40">
+                <span>Alternative FV (Real Rate {(realGrowthRate * 100).toFixed(2)}%):</span>
+                <span className="font-mono">{formatCurrency(simpleFV, masterCurrency)}</span>
+              </div>
+            </div>
+            <div className="border-t border-white/10 pt-2 mt-2">
+              <div className="flex justify-between items-center">
+                <span className="font-medium">Gap to Goal:</span>
+                <span className={`font-mono font-bold ${capitalGap <= 0 ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>
+                  {capitalGap <= 0 ? 'SURPLUS ' : 'DEFICIT '}{formatCurrency(Math.abs(capitalGap), masterCurrency)}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Analysis Results */}
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <div className="p-3 rounded-xl bg-white/5">
+            <div className="text-xs text-white/40">Capital Gap</div>
+            <div className={`text-lg font-semibold mt-1 ${isSufficient ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>
+              {isSufficient ? '+' : '-'}{formatCurrency(Math.abs(capitalGap), masterCurrency)}
+            </div>
+          </div>
+          <div className="p-3 rounded-xl bg-white/5">
+            <div className="text-xs text-white/40">Monthly Savings Needed</div>
+            <div className={`text-lg font-semibold mt-1 ${savingsGapMonthly > 0 ? 'text-[#f87171]' : 'text-[#4ade80]'}`}>
+              {formatCurrency(savingsGapMonthly, masterCurrency)}
+            </div>
+          </div>
+          <div className="p-3 rounded-xl bg-white/5">
+            <div className="text-xs text-white/40">Weighted Return</div>
+            <div className="text-lg font-semibold text-white mt-1">
+              {(weightedReturn * 100).toFixed(2)}%
+            </div>
+          </div>
+        </div>
+
+        {/* AI Advice */}
+        <div className="space-y-3">
+          <Button
+            onClick={generateAdvice}
+            disabled={loadingAdvice}
+            className="w-full bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white"
+          >
+            {loadingAdvice ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Sparkles className="w-4 h-4 mr-2" />
+            )}
+            Generate AI Advice
+          </Button>
+          
+          {advice && (
+            <div className="p-4 rounded-xl bg-gradient-to-br from-violet-500/10 to-indigo-500/10 border border-violet-500/20">
+              <div className="flex items-center gap-2 mb-3">
+                <Sparkles className="w-4 h-4 text-violet-400" />
+                <span className="text-sm font-medium text-violet-300">AI Financial Advisor</span>
+              </div>
+              <div className="text-sm text-white/80 whitespace-pre-wrap leading-relaxed">
+                {advice}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </SectionCard>
+  );
+}

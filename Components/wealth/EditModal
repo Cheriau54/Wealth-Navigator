@@ -1,0 +1,113 @@
+import React, { useState, useEffect } from 'react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { CURRENCIES } from './CurrencyUtils';
+
+export default function EditModal({ 
+  isOpen, 
+  onClose, 
+  title, 
+  fields, 
+  data, 
+  onSave 
+}) {
+  const [formData, setFormData] = useState({});
+
+  useEffect(() => {
+    if (data) {
+      setFormData(data);
+    } else {
+      const initial = {};
+      fields.forEach(f => {
+        initial[f.key] = f.default || '';
+      });
+      setFormData(initial);
+    }
+  }, [data, fields, isOpen]);
+
+  const handleChange = (key, value) => {
+    setFormData(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onSave(formData);
+    onClose();
+  };
+
+  return (
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="bg-[#1e293b] border-white/10 text-white max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-xl font-medium">{title}</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4 mt-4">
+          {fields.map(field => (
+            <div key={field.key} className="space-y-2">
+              <Label className="text-white/70 text-sm">{field.label}</Label>
+              {field.type === 'select' ? (
+                <Select 
+                  value={formData[field.key] || ''} 
+                  onValueChange={(v) => handleChange(field.key, v)}
+                >
+                  <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                    <SelectValue placeholder={`Select ${field.label}`} />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#1e293b] border-white/10">
+                    {field.options.map(opt => (
+                      <SelectItem key={opt} value={opt} className="text-white hover:bg-white/10">
+                        {opt}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : field.type === 'currency' ? (
+                <Select 
+                  value={formData[field.key] || 'USD'} 
+                  onValueChange={(v) => handleChange(field.key, v)}
+                >
+                  <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#1e293b] border-white/10">
+                    {CURRENCIES.map(c => (
+                      <SelectItem key={c} value={c} className="text-white hover:bg-white/10">
+                        {c}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  type={field.type}
+                  step={field.type === 'number' ? 'any' : undefined}
+                  value={formData[field.key] || ''}
+                  onChange={(e) => handleChange(field.key, field.type === 'number' ? parseFloat(e.target.value) || 0 : e.target.value)}
+                  className="bg-white/5 border-white/10 text-white placeholder:text-white/30"
+                  placeholder={field.placeholder}
+                />
+              )}
+            </div>
+          ))}
+          <div className="flex gap-3 pt-4">
+            <Button 
+              type="button" 
+              variant="outline" 
+              onClick={onClose}
+              className="flex-1 bg-transparent border-white/20 text-white hover:bg-white/10"
+            >
+              Cancel
+            </Button>
+            <Button 
+              type="submit"
+              className="flex-1 bg-[#4ade80] text-[#0f172a] hover:bg-[#22c55e] font-medium"
+            >
+              Save
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+ 

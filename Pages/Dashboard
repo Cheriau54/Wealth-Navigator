@@ -1,0 +1,260 @@
+import React, { useState, useEffect } from 'react';
+import { Save, Trash2, Settings2 } from 'lucide-react';
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { 
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { toast } from "sonner";
+
+import { CURRENCIES, convertCurrency, fetchExchangeRates } from '../components/wealth/CurrencyUtils';
+import NetWorthDisplay from '../components/wealth/NetWorthDisplay';
+import LiquidAssets from '../components/wealth/LiquidAssets';
+import FixedSavings from '../components/wealth/FixedSavings';
+import EquitiesPortfolio from '../components/wealth/EquitiesPortfolio';
+import Liabilities from '../components/wealth/Liabilities';
+import AuditPlan from '../components/wealth/AuditPlan';
+import PortfolioPieChart from '../components/wealth/PortfolioPieChart';
+
+const STORAGE_KEY = 'wealth-auditor-data';
+
+const initialState = {
+  appTitle: 'Wealth Auditor Pro',
+  masterCurrency: 'USD',
+  liquidAssets: [],
+  fixedSavings: [],
+  equities: [],
+  liabilities: [],
+  auditPlan: {
+    wealthGoal: 1000000,
+    goalCurrency: 'USD',
+    horizonYears: 10,
+    monthlyIncome: 5000,
+    estInflation: 3,
+    estStockGrowth: 7
+  },
+  livePrices: {}
+};
+
+export default function Dashboard() {
+  const [state, setState] = useState(initialState);
+  const [isEditing, setIsEditing] = useState(false);
+
+  // Load from localStorage on mount and fetch exchange rates
+  useEffect(() => {
+    const loadData = async () => {
+      // Fetch exchange rates FIRST before loading any data
+      await fetchExchangeRates();
+      
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          setState({ ...initialState, ...parsed });
+        } catch (e) {
+          console.error('Failed to parse saved data');
+        }
+      }
+    };
+    
+    loadData();
+  }, []);
+
+  const updateState = (key, value) => {
+    setState(prev => ({ ...prev, [key]: value }));
+  };
+
+  // Calculate totals
+  const liquidTotal = state.liquidAssets.reduce((sum, item) => 
+    sum + convertCurrency(item.balance, item.currency, state.masterCurrency), 0);
+
+  const fixedTotal = state.fixedSavings.reduce((sum, item) => {
+    const interest = item.principal * (item.annualRate / 100) * (item.durationMonths / 12);
+    const maturityValue = item.principal + interest;
+    return sum + convertCurrency(maturityValue, item.currency, state.masterCurrency);
+  }, 0);
+
+  const equitiesTotal = state.equities.reduce((sum, item) => {
+    const priceData = state.livePrices[item.ticker?.toUpperCase()];
+    const price = priceData?.price || item.avgBuyPrice;
+    return sum + convertCurrency(item.quantity * price, 'USD', state.masterCurrency);
+  }, 0);
+
+  const liabilitiesTotal = state.liabilities.reduce((sum, item) => 
+    sum + convertCurrency(item.amount, item.currency, state.masterCurrency), 0);
+
+  const totalNetWorth = liquidTotal + fixedTotal + equitiesTotal - liabilitiesTotal;
+
+  const portfolioBreakdown = {
+    liquid: liquidTotal,
+    fixed: fixedTotal,
+    equities: equitiesTotal
+  };
+
+  const handleSave = () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    toast.success('Data saved successfully');
+  };
+
+  const handleWipe = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    setState(initialState);
+    toast.success('All data wiped');
+  };
+
+  const handleTitleChange = (e) => {
+    updateState('appTitle', e.target.innerText);
+  };
+
+  return (
+    <div className="min-h-screen pb-20">
+      {/* Header */}
+      <header className="sticky top-0 z-50 backdrop-blur-xl bg-[#0f172a]/80 border-b border-white/5">
+        <div className="max-w-7xl mx-auto px-4 py-4">
+          <div className="flex items-center justify-between">
+            <h1 
+              contentEditable
+              suppressContentEditableWarning
+              onBlur={handleTitleChange}
+              onFocus={() => setIsEditing(true)}
+              className={`text-2xl md:text-3xl font-bold text-white outline-none cursor-text px-2 py-1 rounded-lg transition-colors ${
+                isEditing ? 'bg-white/5 ring-1 ring-white/20' : 'hover:bg-white/5'
+              }`}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  e.target.blur();
+                }
+              }}
+            >
+              {state.appTitle}
+            </h1>
+            
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <Settings2 className="w-4 h-4 text-white/40" />
+                <Select 
+                  value={state.masterCurrency} 
+                  onValueChange={(v) => updateState('masterCurrency', v)}
+                >
+                  <SelectTrigger className="w-24 bg-white/5 border-white/10 text-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#1e293b] border-white/10">
+                    {CURRENCIES.map(c => (
+                      <SelectItem key={c} value={c} className="text-white hover:bg-white/10">
+                        {c}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <Button 
+                onClick={handleSave}
+                className="bg-[#4ade80] text-[#0f172a] hover:bg-[#22c55e] font-medium"
+              >
+                <Save className="w-4 h-4 mr-2" />
+                Save
+              </Button>
+              
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button 
+                    variant="outline"
+                    className="border-red-500/30 text-[#f87171] hover:bg-red-500/10 hover:text-[#f87171]"
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Wipe
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent className="bg-[#1e293b] border-white/10 text-white">
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Wipe All Data?</AlertDialogTitle>
+                    <AlertDialogDescription className="text-white/60">
+                      This will permanently delete all your financial data. This action cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel className="bg-white/5 border-white/10 text-white hover:bg-white/10">
+                      Cancel
+                    </AlertDialogCancel>
+                    <AlertDialogAction 
+                      onClick={handleWipe}
+                      className="bg-[#f87171] text-white hover:bg-red-600"
+                    >
+                      Wipe Everything
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Net Worth Display */}
+      <div className="max-w-7xl mx-auto px-4">
+        <NetWorthDisplay netWorth={totalNetWorth} masterCurrency={state.masterCurrency} />
+      </div>
+
+      {/* Main Grid */}
+      <main className="max-w-7xl mx-auto px-4 mt-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Left Column */}
+          <div className="space-y-6">
+            <LiquidAssets 
+              data={state.liquidAssets}
+              setData={(d) => updateState('liquidAssets', d)}
+              masterCurrency={state.masterCurrency}
+            />
+            
+            <FixedSavings 
+              data={state.fixedSavings}
+              setData={(d) => updateState('fixedSavings', d)}
+              masterCurrency={state.masterCurrency}
+            />
+            
+            <EquitiesPortfolio 
+              data={state.equities}
+              setData={(d) => updateState('equities', d)}
+              masterCurrency={state.masterCurrency}
+              livePrices={state.livePrices}
+              setLivePrices={(p) => updateState('livePrices', p)}
+            />
+          </div>
+
+          {/* Right Column */}
+          <div className="space-y-6">
+            <Liabilities 
+              data={state.liabilities}
+              setData={(d) => updateState('liabilities', d)}
+              masterCurrency={state.masterCurrency}
+            />
+            
+            <PortfolioPieChart 
+              breakdown={portfolioBreakdown}
+              masterCurrency={state.masterCurrency}
+            />
+            
+            <AuditPlan 
+              data={state.auditPlan}
+              setData={(d) => updateState('auditPlan', d)}
+              masterCurrency={state.masterCurrency}
+              currentNetWorth={totalNetWorth}
+              portfolioBreakdown={portfolioBreakdown}
+            />
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}

@@ -1,0 +1,40 @@
+import React from 'react';
+import { TrendingUp, TrendingDown } from 'lucide-react';
+import { formatCurrency } from './CurrencyUtils';
+import { motion } from 'framer-motion';
+
+export default function NetWorthDisplay({ netWorth, masterCurrency }) {
+  const isPositive = netWorth >= 0;
+  
+  return (
+    <motion.div 
+      className="text-center py-8"
+      initial={{ opacity: 0, y: -20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5 }}
+    >
+      <div className="text-sm text-white/40 uppercase tracking-widest mb-2">
+        Total Net Worth
+      </div>
+      <div className="flex items-center justify-center gap-3">
+        <motion.div 
+          className={`text-5xl md:text-6xl font-bold tracking-tight ${
+            isPositive ? 'text-[#4ade80] green-glow' : 'text-[#f87171] red-glow'
+          }`}
+          key={netWorth}
+          initial={{ scale: 0.95, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ type: "spring", stiffness: 200 }}
+        >
+          {formatCurrency(netWorth, masterCurrency)}
+        </motion.div>
+        {isPositive ? (
+          <TrendingUp className="w-8 h-8 text-[#4ade80]" />
+        ) : (
+          <TrendingDown className="w-8 h-8 text-[#f87171]" />
+        )}
+      </div>
+      <div className="text-sm text-white/30 mt-2">{masterCurrency}</div>
+    </motion.div>
+  );
+}

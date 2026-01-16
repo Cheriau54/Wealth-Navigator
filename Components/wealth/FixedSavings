@@ -1,0 +1,167 @@
+import React, { useState } from 'react';
+import { Landmark, Plus, Pencil, Trash2 } from 'lucide-react';
+import { Button } from "@/components/ui/button";
+import SectionCard from './SectionCard';
+import EditModal from './EditModal';
+import { convertCurrency, formatCurrency } from './CurrencyUtils';
+import { format, addMonths, differenceInDays, parseISO } from 'date-fns';
+
+const FIELDS = [
+  { key: 'institution', label: 'Institution', type: 'text', placeholder: 'e.g. HSBC' },
+  { key: 'principal', label: 'Principal', type: 'number', placeholder: '0.00' },
+  { key: 'annualRate', label: 'Annual Rate %', type: 'number', placeholder: '5.0' },
+  { key: 'durationMonths', label: 'Duration (Months)', type: 'number', placeholder: '12' },
+  { key: 'startDate', label: 'Start Date', type: 'date' },
+  { key: 'currency', label: 'Currency', type: 'currency', default: 'USD' }
+];
+
+export default function FixedSavings({ data, setData, masterCurrency }) {
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editIndex, setEditIndex] = useState(null);
+
+  const calculateMaturity = (item) => {
+    const principal = item.principal || 0;
+    const rate = (item.annualRate || 0) / 100;
+    const months = item.durationMonths || 0;
+    
+    // Simple interest: Principal * Rate * (Months/12)
+    const interest = principal * rate * (months / 12);
+    const maturityValue = principal + interest;
+    const maturityDate = item.startDate ? addMonths(parseISO(item.startDate), months) : null;
+    
+    // Days remaining
+    const today = new Date();
+    const daysRemaining = maturityDate ? Math.max(0, differenceInDays(maturityDate, today)) : 0;
+    
+    return { interest, maturityValue, maturityDate, daysRemaining };
+  };
+
+  const calculateTotal = () => {
+    return data.reduce((sum, item) => {
+      const { maturityValue } = calculateMaturity(item);
+      return sum + convertCurrency(maturityValue, item.currency, masterCurrency);
+    }, 0);
+  };
+
+  const handleSave = (formData) => {
+    const newData = [...data];
+    if (editIndex !== null) {
+      newData[editIndex] = formData;
+    } else {
+      newData.push({ ...formData, id: Date.now() });
+    }
+    setData(newData);
+    setEditIndex(null);
+  };
+
+  const handleEdit = (index) => {
+    setEditIndex(index);
+    setModalOpen(true);
+  };
+
+  const handleDelete = (index) => {
+    setData(data.filter((_, i) => i !== index));
+  };
+
+  return (
+    <SectionCard
+      title="Fixed Savings"
+      icon={<Landmark className="w-5 h-5 text-[#4ade80]" />}
+      headerValue={calculateTotal()}
+      masterCurrency={masterCurrency}
+    >
+      <div className="space-y-3">
+        <div className="overflow-x-auto pb-2">
+          {data.length === 0 ? (
+            <div className="text-center py-8 text-white/30">
+              No fixed savings added yet
+            </div>
+          ) : (
+            <div className="flex gap-3 min-w-max">
+              {data.map((item, index) => {
+                const { maturityValue, maturityDate, daysRemaining, interest } = calculateMaturity(item);
+                const convertedValue = convertCurrency(maturityValue, item.currency, masterCurrency);
+                return (
+                  <div 
+                    key={item.id || index}
+                    className="flex-shrink-0 w-80 p-3 rounded-xl bg-white/5 hover:bg-white/[0.07] transition-colors group"
+                  >
+                    <div className="flex flex-col h-full">
+                      <div className="flex-1">
+                        <div className="font-medium text-white/90 mb-2">{item.institution}</div>
+                        <div className="text-sm text-white/40">
+                          Principal: {formatCurrency(item.principal, item.currency)} @ {item.annualRate}%
+                        </div>
+                        <div className="text-xs text-[#4ade80] mt-1.5">
+                          +{formatCurrency(interest, item.currency)} interest
+                        </div>
+                        <div className="flex flex-col gap-1 mt-2 text-xs">
+                          {maturityDate && (
+                            <>
+                              <div className="text-white/40">
+                                {daysRemaining > 0 ? `${daysRemaining}d to maturity` : 'Matured'}
+                              </div>
+                              <div className="text-violet-400">
+                                Ends: {format(maturityDate, 'MMM d, yyyy')}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                        <div className="mt-2 pt-2 border-t border-white/10">
+                          <div className="text-sm font-medium text-[#4ade80]">
+                            {formatCurrency(maturityValue, item.currency)}
+                          </div>
+                          {item.currency !== masterCurrency && (
+                            <div className="text-xs text-[#4ade80]/60 mt-0.5">
+                              ≈ {formatCurrency(convertedValue, masterCurrency)}
+                            </div>
+                          )}
+                          <div className="text-xs text-white/30 mt-0.5">at maturity</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 mt-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => handleEdit(index)}
+                          className="h-7 w-7 text-white/50 hover:text-white hover:bg-white/10"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => handleDelete(index)}
+                          className="h-7 w-7 text-white/50 hover:text-[#f87171] hover:bg-red-500/10"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        
+        <Button
+          onClick={() => { setEditIndex(null); setModalOpen(true); }}
+          className="w-full bg-white/5 hover:bg-white/10 text-white/70 border border-dashed border-white/20"
+        >
+          <Plus className="w-4 h-4 mr-2" />
+          Add Fixed Deposit
+        </Button>
+      </div>
+
+      <EditModal
+        isOpen={modalOpen}
+        onClose={() => { setModalOpen(false); setEditIndex(null); }}
+        title={editIndex !== null ? "Edit Fixed Deposit" : "Add Fixed Deposit"}
+        fields={FIELDS}
+        data={editIndex !== null ? data[editIndex] : null}
+        onSave={handleSave}
+      />
+    </SectionCard>
+  );
+}

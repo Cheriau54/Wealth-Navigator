@@ -1,0 +1,119 @@
+import React, { useState } from 'react';
+import { CreditCard, Plus, Pencil, Trash2 } from 'lucide-react';
+import { Button } from "@/components/ui/button";
+import SectionCard from './SectionCard';
+import EditModal from './EditModal';
+import { convertCurrency, formatCurrency } from './CurrencyUtils';
+
+const FIELDS = [
+  { key: 'creditor', label: 'Creditor', type: 'text', placeholder: 'e.g. Bank of America' },
+  { key: 'amount', label: 'Amount Owed', type: 'number', placeholder: '0.00' },
+  { key: 'currency', label: 'Currency', type: 'currency', default: 'USD' }
+];
+
+export default function Liabilities({ data, setData, masterCurrency }) {
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editIndex, setEditIndex] = useState(null);
+
+  const calculateTotal = () => {
+    return data.reduce((sum, item) => {
+      return sum + convertCurrency(item.amount, item.currency, masterCurrency);
+    }, 0);
+  };
+
+  const handleSave = (formData) => {
+    const newData = [...data];
+    if (editIndex !== null) {
+      newData[editIndex] = formData;
+    } else {
+      newData.push({ ...formData, id: Date.now() });
+    }
+    setData(newData);
+    setEditIndex(null);
+  };
+
+  const handleDelete = (index) => {
+    setData(data.filter((_, i) => i !== index));
+  };
+
+  return (
+    <SectionCard
+      title="Liabilities"
+      icon={<CreditCard className="w-5 h-5 text-[#f87171]" />}
+      headerValue={-calculateTotal()}
+      masterCurrency={masterCurrency}
+      isNegative={true}
+    >
+      <div className="space-y-3">
+        <div className="overflow-x-auto pb-2">
+          {data.length === 0 ? (
+            <div className="text-center py-8 text-white/30">
+              No liabilities added yet
+            </div>
+          ) : (
+            <div className="flex gap-3 min-w-max">
+              {data.map((item, index) => {
+                const convertedValue = convertCurrency(item.amount, item.currency, masterCurrency);
+                return (
+                  <div 
+                    key={item.id || index}
+                    className="flex-shrink-0 w-64 p-3 rounded-xl bg-red-500/5 border border-red-500/10 hover:bg-red-500/10 transition-colors group"
+                  >
+                    <div className="flex flex-col h-full">
+                      <div className="flex-1">
+                        <div className="font-medium text-white/90 mb-2">{item.creditor}</div>
+                        <div className="text-sm text-[#f87171]">
+                          -{formatCurrency(item.amount, item.currency)}
+                        </div>
+                        {item.currency !== masterCurrency && (
+                          <div className="text-xs text-[#f87171]/60 mt-1">
+                            ≈ -{formatCurrency(convertedValue, masterCurrency)}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => { setEditIndex(index); setModalOpen(true); }}
+                          className="h-8 w-8 text-white/50 hover:text-white hover:bg-white/10"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => handleDelete(index)}
+                          className="h-8 w-8 text-white/50 hover:text-[#f87171] hover:bg-red-500/10"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        
+        <Button
+          onClick={() => { setEditIndex(null); setModalOpen(true); }}
+          className="w-full bg-red-500/10 hover:bg-red-500/20 text-[#f87171] border border-dashed border-red-500/30"
+        >
+          <Plus className="w-4 h-4 mr-2" />
+          Add Liability
+        </Button>
+      </div>
+
+      <EditModal
+        isOpen={modalOpen}
+        onClose={() => { setModalOpen(false); setEditIndex(null); }}
+        title={editIndex !== null ? "Edit Liability" : "Add Liability"}
+        fields={FIELDS}
+        data={editIndex !== null ? data[editIndex] : null}
+        onSave={handleSave}
+      />
+    </SectionCard>
+  );
+}
